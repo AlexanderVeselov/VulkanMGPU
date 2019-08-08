@@ -19,10 +19,8 @@ namespace
     std::vector<VkDevice> vk_devices;
     std::vector<VkCommandPool> command_pools;
     std::vector<VkCommandBuffer> command_buffers_1;
-    std::vector<VkCommandBuffer> command_buffers_2;
     std::vector<VkFence> fences;
 
-    std::vector<VkSemaphore> internal_semaphores;
     std::vector<VkSemaphore> external_semaphores;
 
 }
@@ -42,7 +40,8 @@ void CreateInstance()
 {
     std::vector<char*> instance_extension_names =
     {
-        "VK_EXT_debug_utils"
+        "VK_EXT_debug_utils",
+		"VK_KHR_external_semaphore_capabilities"
     };
 
     std::vector<char*> instance_layer_names =
@@ -152,7 +151,6 @@ void CreateCommandPools()
 void AllocateCommandBuffers()
 {
     command_buffers_1.resize(physical_devices.size());
-    command_buffers_2.resize(physical_devices.size());
 
     for (auto i = 0u; i < vk_devices.size(); ++i)
     {
@@ -162,9 +160,6 @@ void AllocateCommandBuffers()
         cmd_buffer_allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cmd_buffer_allocate_info.commandBufferCount = 1u;
         VkResult result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers_1[i]);
-        CHECK_RESULT();
-
-        result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers_2[i]);
         CHECK_RESULT();
     }
 }
@@ -177,27 +172,14 @@ void RecordCommandBuffers()
         VkCommandBufferBeginInfo cmd_buffer_begin_info = {};
         cmd_buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
-        // Cmd buffer 1
-        {
-            VkResult result = vkBeginCommandBuffer(command_buffers_1[i], &cmd_buffer_begin_info);
-            CHECK_RESULT();
+        VkResult result = vkBeginCommandBuffer(command_buffers_1[i], &cmd_buffer_begin_info);
+        CHECK_RESULT();
 
-            // Nothing to do
+        // Nothing to do
 
-            result = vkEndCommandBuffer(command_buffers_1[i]);
-            CHECK_RESULT();
-        }
+        result = vkEndCommandBuffer(command_buffers_1[i]);
+        CHECK_RESULT();
 
-        // Cmd buffer 2
-        {
-            VkResult result = vkBeginCommandBuffer(command_buffers_2[i], &cmd_buffer_begin_info);
-            CHECK_RESULT();
-
-            // Nothing to do
-
-            result = vkEndCommandBuffer(command_buffers_2[i]);
-            CHECK_RESULT();
-        }
     }
 }
 
@@ -211,20 +193,6 @@ void CreateFences()
         fence_create_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
         VkResult result = vkCreateFence(vk_devices[i], &fence_create_info, nullptr, &fences[i]);
-        CHECK_RESULT();
-    }
-}
-
-void CreateInternalSemaphores()
-{
-    internal_semaphores.resize(vk_devices.size());
-
-    for (auto i = 0u; i < vk_devices.size(); ++i)
-    {
-        VkSemaphoreCreateInfo semaphore_create_info = {};
-        semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-        VkResult result = vkCreateSemaphore(vk_devices[i], &semaphore_create_info, nullptr, &internal_semaphores[i]);
         CHECK_RESULT();
     }
 }
@@ -366,52 +334,17 @@ void SubmitCommandBuffers()
     // Submit 1st cmd buffer to the first device
     {
         std::vector<VkSemaphore> wait_semaphores;
-        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[0] };
-        Submit(vk_devices[0], command_buffers_1[0], wait_semaphores, signal_semaphores, VK_NULL_HANDLE);
+        std::vector<VkSemaphore> signal_semaphores = { external_semaphores[0] };
+        Submit(vk_devices[0], command_buffers_1[0], wait_semaphores, signal_semaphores, fences[0]);
     }
 
     // Submit 1st cmd buffer to the second device
     {
-        std::vector<VkSemaphore> wait_semaphores;
+		std::vector<VkSemaphore> wait_semaphores = { external_semaphores[1] };
         // Signal import semaphore
-        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[1], external_semaphores[1] };
+		std::vector<VkSemaphore> signal_semaphores;
         Submit(vk_devices[1], command_buffers_1[1], wait_semaphores, signal_semaphores, fences[1]);
     }
-
-    // Submit 2nd cmd buffer to the first device
-    {
-        std::vector<VkSemaphore> wait_semaphores = { external_semaphores[0], internal_semaphores[0] };
-        std::vector<VkSemaphore> signal_semaphores;
-        Submit(vk_devices[0], command_buffers_2[0], wait_semaphores, signal_semaphores, fences[0]);
-    }
-
-    // Wait on fences
-    WaitForFences();
-
-    // Submit cmd buffers again
-    {
-        std::vector<VkSemaphore> wait_semaphores;
-        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[0] };
-        Submit(vk_devices[0], command_buffers_1[0], wait_semaphores, signal_semaphores, VK_NULL_HANDLE);
-    }
-
-    // Submit 1st cmd buffer to the second device
-    {
-        std::vector<VkSemaphore> wait_semaphores = { internal_semaphores[1] };
-        // Signal import semaphore
-        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[1], external_semaphores[1] };
-        Submit(vk_devices[1], command_buffers_1[1], wait_semaphores, signal_semaphores, fences[1]);
-    }
-
-    // Submit 2nd cmd buffer to the first device
-    {
-        std::vector<VkSemaphore> wait_semaphores = { external_semaphores[0], internal_semaphores[0] };
-        std::vector<VkSemaphore> signal_semaphores;
-        Submit(vk_devices[0], command_buffers_2[0], wait_semaphores, signal_semaphores, fences[0]);
-    }
-
-    // Wait on fences
-    WaitForFences();
 
 }
 
@@ -424,9 +357,9 @@ void RunApplication()
     AllocateCommandBuffers();
     RecordCommandBuffers();
     CreateFences();
-    CreateInternalSemaphores();
     CreateSharedSemaphore();
     SubmitCommandBuffers();
+	WaitForFences();
 }
 
 int main(int argc, char** argv)
