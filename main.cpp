@@ -9,14 +9,19 @@
         throw std::runtime_error("VkResult = " + std::to_string(result)); \
     }
 
-void RunApplication()
+namespace
 {
     VkInstance vk_instance;
+    std::vector<VkPhysicalDevice> physical_devices;
+    std::vector<VkDevice> vk_devices;
+    std::vector<VkCommandPool> command_pools;
+    std::vector<VkCommandBuffer> command_buffers;
+}
 
+void CreateInstance()
+{
     std::vector<char*> instance_extension_names;
     std::vector<char*> instance_layer_names;
-
-    VkResult result = VK_SUCCESS;
 
     VkInstanceCreateInfo instance_create_info = {};
     instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -24,28 +29,29 @@ void RunApplication()
     instance_create_info.ppEnabledLayerNames = instance_layer_names.data();
     instance_create_info.enabledExtensionCount = (std::uint32_t)instance_extension_names.size();
     instance_create_info.ppEnabledExtensionNames = instance_extension_names.data();
-    result = vkCreateInstance(&instance_create_info, nullptr, &vk_instance);
+    VkResult result = vkCreateInstance(&instance_create_info, nullptr, &vk_instance);
     CHECK_RESULT();
 
+}
+
+void EnumeratePhysicalDevices()
+{
     std::uint32_t physical_device_count;
-    std::vector<VkPhysicalDevice> physical_devices;
-    result = vkEnumeratePhysicalDevices(vk_instance, &physical_device_count, nullptr);
+
+    VkResult result = vkEnumeratePhysicalDevices(vk_instance, &physical_device_count, nullptr);
     CHECK_RESULT();
 
     physical_devices.resize(physical_device_count);
     result = vkEnumeratePhysicalDevices(vk_instance, &physical_device_count, physical_devices.data());
     CHECK_RESULT();
+}
 
-    std::vector<VkDevice> vk_devices;
+void CreateVkDevices()
+{
     vk_devices.resize(physical_devices.size());
 
     std::vector<char*> device_layer_names;
     std::vector<char*> device_extension_names;
-
-    std::vector<VkCommandPool> command_pools;
-    command_pools.resize(physical_devices.size());
-    std::vector<VkCommandBuffer> command_buffers;
-    command_buffers.resize(physical_devices.size());
 
     for (auto i = 0u; i < physical_devices.size(); ++i)
     {
@@ -67,32 +73,63 @@ void RunApplication()
         device_create_info.ppEnabledExtensionNames = device_extension_names.data();
         device_create_info.pEnabledFeatures = nullptr;
 
-        result = vkCreateDevice(physical_devices[i], &device_create_info, nullptr, &vk_devices[i]);
+        VkResult result = vkCreateDevice(physical_devices[i], &device_create_info, nullptr, &vk_devices[i]);
         CHECK_RESULT();
+    }
+}
 
+void CreateCommandPools()
+{
+    command_pools.resize(physical_devices.size());
+
+    for (auto i = 0u; i < vk_devices.size(); ++i)
+    {
         VkCommandPoolCreateInfo command_pool_create_info = {};
         command_pool_create_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         command_pool_create_info.queueFamilyIndex = 0u;
 
-        result = vkCreateCommandPool(vk_devices[i], &command_pool_create_info, nullptr, &command_pools[i]);
+        VkResult result = vkCreateCommandPool(vk_devices[i], &command_pool_create_info, nullptr, &command_pools[i]);
         CHECK_RESULT();
+    }
+}
 
+void AllocateCommandBuffers()
+{
+    command_buffers.resize(physical_devices.size());
+
+    for (auto i = 0u; i < vk_devices.size(); ++i)
+    {
         VkCommandBufferAllocateInfo cmd_buffer_allocate_info = {};
         cmd_buffer_allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         cmd_buffer_allocate_info.commandPool = command_pools[i];
         cmd_buffer_allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cmd_buffer_allocate_info.commandBufferCount = 1u;
-        result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers[i]);
+        VkResult result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers[i]);
         CHECK_RESULT();
+    }
+}
+
+void RecordCommandBuffers()
+{
+    for (auto i = 0u; i < vk_devices.size(); ++i)
+    {
 
         VkCommandBufferBeginInfo cmd_buffer_begin_info = {};
         cmd_buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        result = vkBeginCommandBuffer(command_buffers[i], &cmd_buffer_begin_info);
+        VkResult result = vkBeginCommandBuffer(command_buffers[i], &cmd_buffer_begin_info);
         CHECK_RESULT();
+
+        // Nothing to do
 
         result = vkEndCommandBuffer(command_buffers[i]);
         CHECK_RESULT();
+    }
+}
 
+void SubmitCommandBuffers()
+{
+    for (auto i = 0u; i < vk_devices.size(); ++i)
+    {
         VkQueue queue;
         vkGetDeviceQueue(vk_devices[i], 0u, 0u, &queue);
 
@@ -105,27 +142,21 @@ void RunApplication()
         submit_info.pCommandBuffers = &command_buffers[i];
         submit_info.signalSemaphoreCount = 0u;
         submit_info.pSignalSemaphores = nullptr;
-        result = vkQueueSubmit(queue, 1u, &submit_info, nullptr);
+        VkResult result = vkQueueSubmit(queue, 1u, &submit_info, nullptr);
         CHECK_RESULT();
     }
 
-    //VkPipelineShaderStageCreateInfo shader_stage_create_info = {};
-    //shader_stage_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    //shader_stage_create_info.flags;
-    //shader_stage_create_info.stage;
-    //shader_stage_create_info.module;
-    //shader_stage_create_info.pName;
-    //shader_stage_create_info.pSpecializationInfo;
+}
 
-    //VkComputePipelineCreateInfo pipeline_create_info = {};
-    //pipeline_create_info.flags;
-    //pipeline_create_info.stage;
-    //pipeline_create_info.layout;
-    //pipeline_create_info.basePipelineHandle
-    //pipeline_create_info.basePipelineIndex;
-    //pipeline_create_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-
-    //vkCreateComputePipelines()
+void RunApplication()
+{
+    CreateInstance();
+    EnumeratePhysicalDevices();
+    CreateVkDevices();
+    CreateCommandPools();
+    AllocateCommandBuffers();
+    RecordCommandBuffers();
+    SubmitCommandBuffers();
 
 }
 
