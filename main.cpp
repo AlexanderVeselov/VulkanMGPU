@@ -18,19 +18,37 @@ namespace
     std::vector<VkPhysicalDevice> physical_devices;
     std::vector<VkDevice> vk_devices;
     std::vector<VkCommandPool> command_pools;
-    std::vector<VkCommandBuffer> command_buffers;
+    std::vector<VkCommandBuffer> command_buffers_1;
+    std::vector<VkCommandBuffer> command_buffers_2;
     std::vector<VkFence> fences;
 
-    // Semaphore for the first device
-    VkSemaphore export_semaphore;
-    // Semaphore for the second device
-    VkSemaphore import_semaphore;
+    std::vector<VkSemaphore> internal_semaphores;
+    std::vector<VkSemaphore> external_semaphores;
+
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData) {
+
+    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+
+    return VK_FALSE;
 }
 
 void CreateInstance()
 {
-    std::vector<char*> instance_extension_names;
-    std::vector<char*> instance_layer_names;
+    std::vector<char*> instance_extension_names =
+    {
+        "VK_EXT_debug_utils"
+    };
+
+    std::vector<char*> instance_layer_names =
+    {
+        "VK_LAYER_LUNARG_standard_validation"
+    };
 
     VkInstanceCreateInfo instance_create_info = {};
     instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -39,6 +57,31 @@ void CreateInstance()
     instance_create_info.enabledExtensionCount = (std::uint32_t)instance_extension_names.size();
     instance_create_info.ppEnabledExtensionNames = instance_extension_names.data();
     VkResult result = vkCreateInstance(&instance_create_info, nullptr, &vk_instance);
+    CHECK_RESULT();
+
+    PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT =
+        (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(vk_instance, "vkCreateDebugUtilsMessengerEXT");
+
+    if (!vkCreateDebugUtilsMessengerEXT)
+    {
+        throw std::runtime_error("Failed to find vkCreateDebugUtilsMessengerEXT function!");
+    }
+
+    VkDebugUtilsMessengerCreateInfoEXT debug_utils_messenger_create_info = {};
+    debug_utils_messenger_create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debug_utils_messenger_create_info.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debug_utils_messenger_create_info.messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    debug_utils_messenger_create_info.pfnUserCallback = DebugCallback;
+    debug_utils_messenger_create_info.pUserData = nullptr;
+
+    VkDebugUtilsMessengerEXT debug_messenger;
+    result = vkCreateDebugUtilsMessengerEXT(vk_instance, &debug_utils_messenger_create_info, nullptr, &debug_messenger);
     CHECK_RESULT();
 
 }
@@ -62,6 +105,7 @@ void CreateVkDevices()
     std::vector<char*> device_layer_names;
     std::vector<char*> device_extension_names =
     {
+        "VK_KHR_external_semaphore",
         "VK_KHR_external_semaphore_win32"
     };
 
@@ -107,7 +151,8 @@ void CreateCommandPools()
 
 void AllocateCommandBuffers()
 {
-    command_buffers.resize(physical_devices.size());
+    command_buffers_1.resize(physical_devices.size());
+    command_buffers_2.resize(physical_devices.size());
 
     for (auto i = 0u; i < vk_devices.size(); ++i)
     {
@@ -116,7 +161,10 @@ void AllocateCommandBuffers()
         cmd_buffer_allocate_info.commandPool = command_pools[i];
         cmd_buffer_allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cmd_buffer_allocate_info.commandBufferCount = 1u;
-        VkResult result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers[i]);
+        VkResult result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers_1[i]);
+        CHECK_RESULT();
+
+        result = vkAllocateCommandBuffers(vk_devices[i], &cmd_buffer_allocate_info, &command_buffers_2[i]);
         CHECK_RESULT();
     }
 }
@@ -128,13 +176,28 @@ void RecordCommandBuffers()
 
         VkCommandBufferBeginInfo cmd_buffer_begin_info = {};
         cmd_buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        VkResult result = vkBeginCommandBuffer(command_buffers[i], &cmd_buffer_begin_info);
-        CHECK_RESULT();
 
-        // Nothing to do
+        // Cmd buffer 1
+        {
+            VkResult result = vkBeginCommandBuffer(command_buffers_1[i], &cmd_buffer_begin_info);
+            CHECK_RESULT();
 
-        result = vkEndCommandBuffer(command_buffers[i]);
-        CHECK_RESULT();
+            // Nothing to do
+
+            result = vkEndCommandBuffer(command_buffers_1[i]);
+            CHECK_RESULT();
+        }
+
+        // Cmd buffer 2
+        {
+            VkResult result = vkBeginCommandBuffer(command_buffers_2[i], &cmd_buffer_begin_info);
+            CHECK_RESULT();
+
+            // Nothing to do
+
+            result = vkEndCommandBuffer(command_buffers_2[i]);
+            CHECK_RESULT();
+        }
     }
 }
 
@@ -148,6 +211,20 @@ void CreateFences()
         fence_create_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
         VkResult result = vkCreateFence(vk_devices[i], &fence_create_info, nullptr, &fences[i]);
+        CHECK_RESULT();
+    }
+}
+
+void CreateInternalSemaphores()
+{
+    internal_semaphores.resize(vk_devices.size());
+
+    for (auto i = 0u; i < vk_devices.size(); ++i)
+    {
+        VkSemaphoreCreateInfo semaphore_create_info = {};
+        semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkResult result = vkCreateSemaphore(vk_devices[i], &semaphore_create_info, nullptr, &internal_semaphores[i]);
         CHECK_RESULT();
     }
 }
@@ -239,8 +316,9 @@ void CreateSharedSemaphore()
         throw std::runtime_error("CreateSharedSemaphore: Failed to import semaphore payload from Win32 handle (" + std::to_string(result) + ")");
     }
 
-    export_semaphore = vk_export_semaphore;
-    import_semaphore = vk_import_semaphore;
+    external_semaphores.resize(2);
+    external_semaphores[0] = vk_export_semaphore;
+    external_semaphores[1] = vk_import_semaphore;
 
 }
 
@@ -255,54 +333,85 @@ void WaitForFences()
     }
 }
 
+void Submit(VkDevice device, VkCommandBuffer cmd_buffer, std::vector<VkSemaphore> const& wait_semaphores,
+    std::vector<VkSemaphore> const& signal_semaphores, VkFence fence)
+{
+    std::vector<VkPipelineStageFlags> wait_dst_stage_mask;
+
+    for (auto wait_semaphore : wait_semaphores)
+    {
+        wait_dst_stage_mask.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    }
+
+    VkQueue queue;
+    vkGetDeviceQueue(device, 0u, 0u, &queue);
+
+    VkSubmitInfo submit_info = {};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.waitSemaphoreCount = (std::uint32_t)wait_semaphores.size();
+    submit_info.pWaitSemaphores = wait_semaphores.data();
+    submit_info.pWaitDstStageMask = wait_dst_stage_mask.data();
+    submit_info.commandBufferCount = 1u;
+    submit_info.pCommandBuffers = &cmd_buffer;
+    submit_info.signalSemaphoreCount = (std::uint32_t)signal_semaphores.size();
+    submit_info.pSignalSemaphores = signal_semaphores.data();
+
+    VkResult result = vkQueueSubmit(queue, 1u, &submit_info, fence);
+    CHECK_RESULT();
+
+}
+
 void SubmitCommandBuffers()
 {
-    // Submit to the first device
+    // Submit 1st cmd buffer to the first device
     {
-        VkDevice device = vk_devices[0];
-        VkFence fence = fences[0];
-        VkCommandBuffer cmd_buffer = command_buffers[0];
-
-        VkQueue queue;
-        vkGetDeviceQueue(device, 0u, 0u, &queue);
-
-        VkSubmitInfo submit_info = {};
-        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.waitSemaphoreCount = 0u;
-        submit_info.pWaitSemaphores = nullptr;
-        submit_info.pWaitDstStageMask = nullptr;
-        submit_info.commandBufferCount = 1u;
-        submit_info.pCommandBuffers = &cmd_buffer;
-        submit_info.signalSemaphoreCount = 1u;
-        // Signal to the export semaphore
-        submit_info.pSignalSemaphores = &export_semaphore;
-        VkResult result = vkQueueSubmit(queue, 1u, &submit_info, fence);
-        CHECK_RESULT();
+        std::vector<VkSemaphore> wait_semaphores;
+        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[0] };
+        Submit(vk_devices[0], command_buffers_1[0], wait_semaphores, signal_semaphores, VK_NULL_HANDLE);
     }
 
-    // Submit to the second device
+    // Submit 1st cmd buffer to the second device
     {
-        VkDevice device = vk_devices[1];
-        VkFence fence = fences[1];
-        VkCommandBuffer cmd_buffer = command_buffers[1];
-
-        VkQueue queue;
-        vkGetDeviceQueue(device, 0u, 0u, &queue);
-
-        VkSubmitInfo submit_info = {};
-        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.waitSemaphoreCount = 1u;
-        // Wait on the import semaphore
-        submit_info.pWaitSemaphores = &import_semaphore;
-        VkPipelineStageFlags wait_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        submit_info.pWaitDstStageMask = &wait_mask;
-        submit_info.commandBufferCount = 1u;
-        submit_info.pCommandBuffers = &cmd_buffer;
-        submit_info.signalSemaphoreCount = 0u;
-        submit_info.pSignalSemaphores = nullptr;
-        VkResult result = vkQueueSubmit(queue, 1u, &submit_info, fence);
-        CHECK_RESULT();
+        std::vector<VkSemaphore> wait_semaphores;
+        // Signal import semaphore
+        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[1], external_semaphores[1] };
+        Submit(vk_devices[1], command_buffers_1[1], wait_semaphores, signal_semaphores, fences[1]);
     }
+
+    // Submit 2nd cmd buffer to the first device
+    {
+        std::vector<VkSemaphore> wait_semaphores = { external_semaphores[0], internal_semaphores[0] };
+        std::vector<VkSemaphore> signal_semaphores;
+        Submit(vk_devices[0], command_buffers_2[0], wait_semaphores, signal_semaphores, fences[0]);
+    }
+
+    // Wait on fences
+    WaitForFences();
+
+    // Submit cmd buffers again
+    {
+        std::vector<VkSemaphore> wait_semaphores;
+        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[0] };
+        Submit(vk_devices[0], command_buffers_1[0], wait_semaphores, signal_semaphores, VK_NULL_HANDLE);
+    }
+
+    // Submit 1st cmd buffer to the second device
+    {
+        std::vector<VkSemaphore> wait_semaphores = { internal_semaphores[1] };
+        // Signal import semaphore
+        std::vector<VkSemaphore> signal_semaphores = { internal_semaphores[1], external_semaphores[1] };
+        Submit(vk_devices[1], command_buffers_1[1], wait_semaphores, signal_semaphores, fences[1]);
+    }
+
+    // Submit 2nd cmd buffer to the first device
+    {
+        std::vector<VkSemaphore> wait_semaphores = { external_semaphores[0], internal_semaphores[0] };
+        std::vector<VkSemaphore> signal_semaphores;
+        Submit(vk_devices[0], command_buffers_2[0], wait_semaphores, signal_semaphores, fences[0]);
+    }
+
+    // Wait on fences
+    WaitForFences();
 
 }
 
@@ -315,9 +424,9 @@ void RunApplication()
     AllocateCommandBuffers();
     RecordCommandBuffers();
     CreateFences();
+    CreateInternalSemaphores();
     CreateSharedSemaphore();
     SubmitCommandBuffers();
-
 }
 
 int main(int argc, char** argv)
