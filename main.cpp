@@ -301,7 +301,7 @@ void WaitForFences()
     }
 }
 
-void Submit(VkDevice device, VkCommandBuffer cmd_buffer, std::vector<VkSemaphore> const& wait_semaphores,
+void Submit(VkDevice device, std::vector<VkCommandBuffer> cmd_buffers, std::vector<VkSemaphore> const& wait_semaphores,
     std::vector<VkSemaphore> const& signal_semaphores, VkFence fence)
 {
     std::vector<VkPipelineStageFlags> wait_dst_stage_mask;
@@ -319,8 +319,8 @@ void Submit(VkDevice device, VkCommandBuffer cmd_buffer, std::vector<VkSemaphore
     submit_info.waitSemaphoreCount = (std::uint32_t)wait_semaphores.size();
     submit_info.pWaitSemaphores = wait_semaphores.data();
     submit_info.pWaitDstStageMask = wait_dst_stage_mask.data();
-    submit_info.commandBufferCount = 1u;
-    submit_info.pCommandBuffers = &cmd_buffer;
+    submit_info.commandBufferCount = (std::uint32_t)cmd_buffers.size();
+    submit_info.pCommandBuffers = cmd_buffers.data();
     submit_info.signalSemaphoreCount = (std::uint32_t)signal_semaphores.size();
     submit_info.pSignalSemaphores = signal_semaphores.data();
 
@@ -335,7 +335,8 @@ void SubmitCommandBuffers()
     {
         std::vector<VkSemaphore> wait_semaphores;
         std::vector<VkSemaphore> signal_semaphores = { external_semaphores[0] };
-        Submit(vk_devices[0], command_buffers_1[0], wait_semaphores, signal_semaphores, fences[0]);
+		std::vector<VkCommandBuffer> command_buffers;
+        Submit(vk_devices[0], command_buffers, wait_semaphores, signal_semaphores, fences[0]);
     }
 
     // Submit 1st cmd buffer to the second device
@@ -343,7 +344,8 @@ void SubmitCommandBuffers()
 		std::vector<VkSemaphore> wait_semaphores = { external_semaphores[1] };
         // Signal import semaphore
 		std::vector<VkSemaphore> signal_semaphores;
-        Submit(vk_devices[1], command_buffers_1[1], wait_semaphores, signal_semaphores, fences[1]);
+		std::vector<VkCommandBuffer> command_buffers;
+        Submit(vk_devices[1], command_buffers, wait_semaphores, signal_semaphores, fences[1]);
     }
 
 }
