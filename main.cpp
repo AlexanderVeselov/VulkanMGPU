@@ -110,11 +110,33 @@ void CreateVkDevices()
 
     for (auto i = 0u; i < physical_devices.size(); ++i)
     {
+        std::vector<VkQueueFamilyProperties> queue_family_properties;
+        std::uint32_t queue_family_property_count;
+        vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[i], &queue_family_property_count, nullptr);
+        queue_family_properties.resize(queue_family_property_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[i], &queue_family_property_count, queue_family_properties.data());
+
+        std::uint32_t selected_queue_family_index = 0u;
+        for (auto const& queue_prop : queue_family_properties)
+        {
+            if ((queue_prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) == VK_QUEUE_GRAPHICS_BIT)
+            {
+                break;
+            }
+
+            ++selected_queue_family_index;
+        }
+
+        if (selected_queue_family_index == queue_family_properties.size())
+        {
+            throw std::runtime_error("Failed to find graphics queue family");
+        }
+
         VkDeviceQueueCreateInfo queue_create_info = {};
         queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
         queue_create_info.flags = 0;
-        queue_create_info.queueFamilyIndex = 0;
-        queue_create_info.queueCount = 1;
+        queue_create_info.queueFamilyIndex = selected_queue_family_index;
+        queue_create_info.queueCount = queue_family_properties[selected_queue_family_index].queueCount;
         float priority = 1.0f;
         queue_create_info.pQueuePriorities = &priority;
 
@@ -335,7 +357,7 @@ void SubmitCommandBuffers()
     {
         std::vector<VkSemaphore> wait_semaphores;
         std::vector<VkSemaphore> signal_semaphores = { external_semaphores[0] };
-		std::vector<VkCommandBuffer> command_buffers;
+        std::vector<VkCommandBuffer> command_buffers = { command_buffers_1[0] };
         Submit(vk_devices[0], command_buffers, wait_semaphores, signal_semaphores, fences[0]);
     }
 
@@ -344,7 +366,7 @@ void SubmitCommandBuffers()
 		std::vector<VkSemaphore> wait_semaphores = { external_semaphores[1] };
         // Signal import semaphore
 		std::vector<VkSemaphore> signal_semaphores;
-		std::vector<VkCommandBuffer> command_buffers;
+        std::vector<VkCommandBuffer> command_buffers = { command_buffers_1[1] };
         Submit(vk_devices[1], command_buffers, wait_semaphores, signal_semaphores, fences[1]);
     }
 
